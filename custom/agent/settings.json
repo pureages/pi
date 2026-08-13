@@ -1,0 +1,9 @@
+{
+  "lastChangelogVersion": "0.84.1",
+  "theme": "dark",
+  "fullscreenScrollbar": "auto",
+  "hideThinkingBlock": true,
+  "defaultProvider": "opencode-go",
+  "defaultModel": "deepseek-v4-flash",
+  "defaultThinkingLevel": "max"
+}
