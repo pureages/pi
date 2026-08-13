@@ -1,3 +1,38 @@
+# ⚠️ 本仓库说明（Fork）
+
+本仓库是 [earendil-works/pi](https://github.com/earendil-works/pi)（官方 Pi Agent Harness）的 **fork**，主要用途是保存个人自定义配置，方便换机器或重装时快速恢复：
+
+- 🌈 **自定义扩展**：隐藏思考块标签插件（动态 token 计数 + t/s 速率统计 + 流动彩虹渐变动画）
+- 📝 **全局 Agent 设定**：`AGENTS.md`（网络代理等规则）
+- ⚙️ **TUI 设置**：`settings.json`（主题、隐藏思考块、默认模型等）
+
+所有自定义内容都放在 [`custom/`](custom/) 目录下，具体说明见 [custom/README.md](custom/README.md)。
+
+## 安装步骤
+
+```bash
+# 1. 克隆本仓库
+$ git clone https://github.com/pureages/pi.git
+$ cd pi
+
+# 2. 复制自定义配置到 pi 的 agent 目录
+# Windows (PowerShell):
+PS> Copy-Item -Recurse custom/agent/* $HOME\.pi\agent\
+
+# macOS / Linux:
+$ cp -r custom/agent/* ~/.pi/agent/
+
+# 3. 重启 pi 即可生效（扩展会自动加载到 ~/.pi/agent/extensions/）
+```
+
+> ⚠️ **注意**：`auth.json`、`models.json` 等包含 API key 的敏感文件**不会**提交到仓库，需要在新机器上自行配置。
+
+---
+
+*以下为官方 README 原文：*
+
+---
+
 <p align="center">
   <a href="https://pi.dev">
     <img alt="pi logo" src="https://pi.dev/logo-auto.svg" width="128">
