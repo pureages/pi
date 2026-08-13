@@ -6,10 +6,8 @@
  *   - while the model is thinking:  "Thinking… 5.3k tokens 122 t/s" (live count + rate)
  *   - once it finishes:             "Thought 5.3k tokens" (final count)
  *
- * While thinking, the label is rendered as an animated rainbow gradient:
- * every character gets its own hue and the whole palette slowly flows,
- * for a colorful, multicolored feel. The tokens/second figure is computed
- * over a sliding window and refreshed once per second.
+ * The tokens/second figure is computed over a sliding window and refreshed
+ * once per second. The label text uses the default terminal color.
  *
  * The count prefers the provider-reported `usage.reasoning` (OpenAI
  * `reasoning_tokens`, Anthropic `thinking_tokens`, etc.) and falls back to a
@@ -35,82 +33,26 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const DEFAULT_LABEL = "Pondering...";
 
-// --- Animated rainbow gradient -------------------------------------------------
+// --- Label state ---------------------------------------------------------------
 
-const TICK_MS = 50; // animation frame interval
-const HUE_STEP = 6; // hue shift per tick -> full rainbow cycle every 3s
-const HUE_PER_CHAR = 12; // hue difference between adjacent characters
-const SATURATION = 100; // percent
-const LIGHTNESS = 55; // percent
-
-/** Convert HSL (h: 0-360, s/l: 0-100) to 8-bit RGB. */
-function hslToRgb(h: number, s: number, l: number): [number, number, number] {
-	h = ((h % 360) + 360) % 360;
-	const c = ((1 - Math.abs((2 * l) / 100 - 1)) * s) / 100;
-	const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
-	const m = l / 100 - c / 2;
-	let r = 0, g = 0, b = 0;
-	if (h < 60) { r = c; g = x; }
-	else if (h < 120) { r = x; g = c; }
-	else if (h < 180) { g = c; b = x; }
-	else if (h < 240) { g = x; b = c; }
-	else if (h < 300) { r = x; b = c; }
-	else { r = c; b = x; }
-	return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
-}
-
-/**
- * Color every character with its own hue, shifted by `phase` (0-360).
- * The same text with a larger `phase` looks like the rainbow is flowing.
- */
-function rainbowize(text: string, phase: number): string {
-	let out = "";
-	let i = 0;
-	for (const ch of text) {
-		const hue = (phase + i * HUE_PER_CHAR) % 360;
-		const [r, g, b] = hslToRgb(hue, SATURATION, LIGHTNESS);
-		out += `\x1b[38;2;${r};${g};${b}m${ch}\x1b[39m`;
-		i++;
-	}
-	return out;
-}
-
-// --- Animation state -----------------------------------------------------------
-
-let animTimer: ReturnType<typeof setInterval> | undefined;
 let rateTimer: ReturnType<typeof setInterval> | undefined;
-let huePhase = 0;
 let currentLabel = DEFAULT_LABEL;
 let currentCtx: { ui: { setHiddenThinkingLabel(label?: string): void } } | null = null;
-
-function renderRainbowTick() {
-	if (!currentCtx) return;
-	currentCtx.ui.setHiddenThinkingLabel(rainbowize(currentLabel, huePhase));
-	huePhase = (huePhase + HUE_STEP) % 360;
-}
 
 function startAnimation(ctx: { ui: { setHiddenThinkingLabel(label?: string): void } }, label: string) {
 	currentCtx = ctx;
 	currentLabel = label;
-	if (!animTimer) {
-		huePhase = 0;
-		renderRainbowTick(); // paint immediately, then keep flowing
-		animTimer = setInterval(renderRainbowTick, TICK_MS);
-	}
+	ctx.ui.setHiddenThinkingLabel(label);
 	if (!rateTimer) {
-		// Refresh the label text (token count + t/s) once per second;
-		// the rainbow tick picks up the new text within the next frame.
+		// Refresh the label text (token count + t/s) once per second.
 		rateTimer = setInterval(() => {
 			currentLabel = buildThinkingLabel();
+			currentCtx?.ui.setHiddenThinkingLabel(currentLabel);
 		}, RATE_UPDATE_MS);
 	}
 }
 
 function stopAnimation(): void {
-	if (animTimer) {
-		clearInterval(animTimer);
-		animTimer = undefined;
-	}
 	if (rateTimer) {
 		clearInterval(rateTimer);
 		rateTimer = undefined;
@@ -219,7 +161,7 @@ export default function (pi: ExtensionAPI) {
 		}
 	});
 
-	// While thinking streams, update the label live with the animated rainbow.
+	// While thinking streams, update the label live with the token count.
 	pi.on("message_update", async (event, ctx) => {
 		if (!autoLabel) return;
 		const ev = event.assistantMessageEvent;
@@ -235,14 +177,14 @@ export default function (pi: ExtensionAPI) {
 		startAnimation(ctx, buildThinkingLabel());
 	});
 
-	// When the assistant message finishes, pin the final count with a static rainbow.
+	// When the assistant message finishes, pin the final count.
 	pi.on("message_end", async (event, ctx) => {
 		if (!autoLabel) return;
 		if (event.message.role !== "assistant" || !sawThinking) return;
 
 		stopAnimation();
 		const tokens = getThinkingTokens(event.message);
-		ctx.ui.setHiddenThinkingLabel(rainbowize(`Thought ${formatTokens(tokens)} tokens`, huePhase));
+		ctx.ui.setHiddenThinkingLabel(`Thought ${formatTokens(tokens)} tokens`);
 	});
 
 	pi.registerCommand("thinking-label", {
