@@ -14,6 +14,25 @@
  * character-based estimate while streaming, since most providers only report
  * usage in the final chunk.
  *
+ * Why per-message labels need a workaround:
+ * `ctx.ui.setHiddenThinkingLabel()` is a *session-global* label: pi applies it
+ * to every hidden thinking block (all past messages plus the streaming one).
+ * A naive "set the final count on message_end" implementation therefore makes
+ * every message display the same (last) token count. To give each message its
+ * own count this extension:
+ *   1. imports the real `AssistantMessageComponent` (a public export) and
+ *      patches its `setHiddenThinkingLabel` prototype method to *capture*
+ *      live component instances (the original method still runs unchanged);
+ *   2. remembers the final count of every assistant message, keyed by the
+ *      message object (components expose the same object as `lastMessage`);
+ *   3. after every global label update (live tick, message_start reset,
+ *      message_end final count), re-applies each *older* message's own stored
+ *      label to its own component — only the current message keeps the
+ *      global/live label.
+ *
+ * If the patch cannot be installed (different runtime), the extension falls
+ * back to the original global-label behavior.
+ *
  * Usage:
  *   pi --extension examples/extensions/hidden-thinking-label.ts
  *
@@ -23,15 +42,64 @@
  *   3. Ask for something that produces reasoning output
  *   4. The collapsed thinking block label shows the live token count while
  *      thinking, then the final count when the reply completes
+ *   5. Ask another reasoning question: the previous message keeps its own
+ *      final count instead of inheriting the new message's count
  *
  * Commands:
  *   /thinking-label <text>   Set a fixed label (disables auto token display)
  *   /thinking-label          Re-enable automatic token labels
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { AssistantMessageComponent, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const DEFAULT_LABEL = "Pondering...";
+
+// --- Per-message label support -------------------------------------------------
+// (see header comment for why this exists)
+
+/** Live AssistantMessageComponent instances, captured by the prototype patch. */
+const components = new Set<AssistantMessageComponent>();
+/** Final label per finished assistant message, keyed by the message object. */
+const finalLabels = new Map<object, string>();
+/** Message whose component should keep the global/live label. */
+let currentMessage: object | undefined;
+/** Whether the component-capture patch is active. */
+let captureInstalled = false;
+
+/** Patch the prototype so every live component instance is captured. */
+function installComponentCapture(): void {
+	const proto = AssistantMessageComponent.prototype as unknown as {
+		setHiddenThinkingLabel(label: string): void;
+		__thinkingLabelCaptureInstalled?: boolean;
+	};
+	if (proto.__thinkingLabelCaptureInstalled) return;
+	proto.__thinkingLabelCaptureInstalled = true;
+	const original = proto.setHiddenThinkingLabel;
+	proto.setHiddenThinkingLabel = function (this: AssistantMessageComponent, label: string) {
+		components.add(this);
+		return original.call(this, label);
+	};
+}
+
+/** Re-apply each older message's stored label to its own component. */
+function restoreStoredLabels(activeMessage: object | undefined): void {
+	if (!captureInstalled) return;
+	for (const comp of components) {
+		const message = (comp as unknown as { lastMessage?: object }).lastMessage;
+		if (!message || message === activeMessage) continue;
+		const stored = finalLabels.get(message);
+		if (!stored) continue;
+		const label = (comp as unknown as { hiddenThinkingLabel?: string }).hiddenThinkingLabel;
+		if (label === stored) continue;
+		comp.setHiddenThinkingLabel(stored);
+	}
+}
+
+/** Compute + store the final label for a finished assistant message. */
+function rememberFinalLabel(message: HasThinkingContent): void {
+	if (!getThinkingText(message)) return;
+	finalLabels.set(message as unknown as object, `Thought ${formatTokens(getThinkingTokens(message))} tokens`);
+}
 
 // --- Label state ---------------------------------------------------------------
 
@@ -48,6 +116,9 @@ function startAnimation(ctx: { ui: { setHiddenThinkingLabel(label?: string): voi
 		rateTimer = setInterval(() => {
 			currentLabel = buildThinkingLabel();
 			currentCtx?.ui.setHiddenThinkingLabel(currentLabel);
+			// The global label touched every block; put older messages' own
+			// labels back so only the current message shows the live count.
+			restoreStoredLabels(currentMessage);
 		}, RATE_UPDATE_MS);
 	}
 }
@@ -143,22 +214,46 @@ function getThinkingTokens(message: HasThinkingContent): number {
 
 export default function (pi: ExtensionAPI) {
 	let autoLabel = true; // false once the user sets a fixed label via /thinking-label
-	let sawThinking = false; // current assistant message contains thinking
+
+	// Capture every live component instance (best effort; falls back to the
+	// global-label behavior if the class isn't the one pi is using).
+	try {
+		installComponentCapture();
+		captureInstalled = true;
+	} catch {
+		captureInstalled = false;
+	}
 
 	pi.on("session_start", async (_event, ctx) => {
 		stopAnimation();
+		currentMessage = undefined;
+		components.clear();
+		finalLabels.clear();
+		// Rebuild stored labels from the persisted session (resume/fork/switch).
+		for (const entry of ctx.sessionManager.getBranch()) {
+			if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+			rememberFinalLabel(entry.message as HasThinkingContent);
+		}
 		ctx.ui.setHiddenThinkingLabel(DEFAULT_LABEL);
+		// Past messages' components are created *after* session_start
+		// (renderInitialMessages), so defer the capture+restore pass.
+		setTimeout(() => {
+			if (!autoLabel) return;
+			ctx.ui.setHiddenThinkingLabel(DEFAULT_LABEL); // captures all components
+			restoreStoredLabels(undefined);
+		}, 250);
 	});
 
-	// A new assistant message starts: no thinking seen yet.
-	// Reset the (global) label so the new message doesn't inherit the previous
-	// message's final count before its own thinking starts.
+	// A new assistant message starts: reset the (global) label so the new
+	// message doesn't inherit the previous message's final count, then restore
+	// the older messages' own labels.
 	pi.on("message_start", async (event, ctx) => {
-		if (event.message.role === "assistant") {
-			sawThinking = false;
-			stopAnimation();
-			if (autoLabel) ctx.ui.setHiddenThinkingLabel(DEFAULT_LABEL);
-		}
+		if (event.message.role !== "assistant") return;
+		currentMessage = event.message;
+		stopAnimation();
+		if (!autoLabel) return;
+		ctx.ui.setHiddenThinkingLabel(DEFAULT_LABEL);
+		restoreStoredLabels(event.message);
 	});
 
 	// While thinking streams, update the label live with the token count.
@@ -169,22 +264,32 @@ export default function (pi: ExtensionAPI) {
 
 		const thinkingText = getThinkingText(event.message);
 		if (!thinkingText) return;
-		sawThinking = true;
+		currentMessage = event.message;
 
 		const tokens = getThinkingTokens(event.message);
 		lastTokenCount = tokens;
 		recordSample(tokens);
 		startAnimation(ctx, buildThinkingLabel());
+		restoreStoredLabels(currentMessage);
 	});
 
-	// When the assistant message finishes, pin the final count.
+	// When the assistant message finishes, pin the final count and store it so
+	// this message keeps its own label even after later messages update the
+	// global label.
 	pi.on("message_end", async (event, ctx) => {
 		if (!autoLabel) return;
-		if (event.message.role !== "assistant" || !sawThinking) return;
+		if (event.message.role !== "assistant") return;
 
 		stopAnimation();
+		const thinkingText = getThinkingText(event.message);
+		if (!thinkingText) return;
+		currentMessage = event.message;
+
 		const tokens = getThinkingTokens(event.message);
-		ctx.ui.setHiddenThinkingLabel(`Thought ${formatTokens(tokens)} tokens`);
+		const label = `Thought ${formatTokens(tokens)} tokens`;
+		finalLabels.set(event.message as unknown as object, label);
+		ctx.ui.setHiddenThinkingLabel(label);
+		restoreStoredLabels(event.message);
 	});
 
 	pi.registerCommand("thinking-label", {
@@ -194,6 +299,7 @@ export default function (pi: ExtensionAPI) {
 				autoLabel = true;
 				stopAnimation();
 				ctx.ui.setHiddenThinkingLabel(DEFAULT_LABEL);
+				restoreStoredLabels(undefined);
 				ctx.ui.notify("Auto token label enabled.");
 				return;
 			}

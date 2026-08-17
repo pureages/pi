@@ -1,0 +1,62 @@
+{
+  "providers": {
+    "homePC": {
+      "baseUrl": "http://192.168.31.201:49444/v1",
+      "api": "openai-completions",
+      "apiKey": "YOUR_API_KEY_HERE",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "thinkingFormat": "chat-template",
+        "chatTemplateKwargs": {
+          "enable_thinking": {
+            "$var": "thinking.enabled"
+          }
+        }
+      },
+      "models": [
+        {
+          "id": "HOME-PC",
+          "name": "HomePC Qwen3.8-27B Uncensored",
+          "reasoning": true,
+          "input": [
+            "text",
+            "image"
+          ],
+          "contextWindow": 150000,
+          "maxTokens": 65536
+        }
+      ]
+    },
+    "wyj": {
+      "baseUrl": "https://api.wyj.me/v1",
+      "api": "openai-completions",
+      "apiKey": "YOUR_API_KEY_HERE",
+      "compat": {
+        "supportsDeveloperRole": false
+      },
+      "models": [
+        {
+          "id": "deepseek-v4-flash",
+          "name": "DeepSeek V4 Flash",
+          "reasoning": true,
+          "input": [
+            "text"
+          ],
+          "contextWindow": 1000000,
+          "maxTokens": 65536
+        },
+        {
+          "id": "HOME-PC",
+          "name": "HOME-PC",
+          "reasoning": true,
+          "input": [
+            "text",
+            "image"
+          ],
+          "contextWindow": 150000,
+          "maxTokens": 65536
+        }
+      ]
+    }
+  }
+}

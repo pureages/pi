@@ -1,9 +1,24 @@
 {
-  "lastChangelogVersion": "0.84.1",
+  "lastChangelogVersion": "0.84.2",
   "theme": "dark",
   "fullscreenScrollbar": "auto",
   "hideThinkingBlock": true,
-  "defaultProvider": "opencode-go",
-  "defaultModel": "deepseek-v4-flash",
-  "defaultThinkingLevel": "max"
+  "defaultProvider": "qwen-token-plan-cn",
+  "defaultModel": "deepseek-v4-flash-0731",
+  "defaultThinkingLevel": "high",
+  "compaction": {
+    "enabled": true
+  },
+  "enabledModels": [
+    "minimax-cn/MiniMax-M3",
+    "opencode-go/deepseek-v4-flash",
+    "wyj/HOME-PC",
+    "homePC/HOME-PC",
+    "qwen-token-plan-cn/deepseek-v4-flash-0731"
+  ],
+  "tuiMode": "regular",
+  "httpIdleTimeoutMs": 300000,
+  "images": {
+    "blockImages": false
+  }
 }
